@@ -6,3 +6,6 @@ opencv-python
 numpy
 mss
 websockets
+winreg
+psutil
+json
