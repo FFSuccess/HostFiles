@@ -3,7 +3,6 @@ pyautogui
 aiohttp
 keyboard
 psutil
-json
 opencv-python
 numpy
 mss
