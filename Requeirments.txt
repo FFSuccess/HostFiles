@@ -1,0 +1,8 @@
+requests
+pyautogui
+aiohttp
+keyboard
+opencv-python
+numpy
+mss
+websockets
