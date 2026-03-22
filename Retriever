@@ -11,6 +11,8 @@ import win32process
 import win32security
 import win32ts
 import win32profile
+import ctypes
+import base64
 
 SERVER_URL = "http://192.168.10.77:8000"
 WS_URL = "ws://192.168.10.77:8000/ws"
@@ -37,6 +39,21 @@ headers = {
 header_lock = threading.Lock()
 PYTHON_EXE = sys.executable
 
+def elevate():
+    """Re-launch the current script with UAC elevation if not already admin."""
+    if ctypes.windll.shell32.IsUserAnAdmin():
+        return  # Already elevated, nothing to do
+
+    ctypes.windll.shell32.ShellExecuteW(
+        None,
+        "runas",
+        sys.executable,
+        " ".join(f'"{arg}"' for arg in sys.argv),
+        None,
+        1
+    )
+    sys.exit()
+
 def launch_python_code_in_user_session(code: str):
     try:
         session_id = win32ts.WTSGetActiveConsoleSessionId()
@@ -51,10 +68,8 @@ def launch_python_code_in_user_session(code: str):
             None
         )
         user_env = win32profile.CreateEnvironmentBlock(duplicated_token, False)
-        # Escape quotes properly
-        safe_code = code.replace('"', '\\"')
-
-        cmd = f'"{PYTHON_EXE}" -c "{safe_code}"'
+        encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
+        cmd = f'"{PYTHON_EXE}" -c "import base64; exec(base64.b64decode(\'{encoded}\'))"'
 
         win32process.CreateProcessAsUser(
             duplicated_token,
@@ -131,4 +146,5 @@ def poll_server():
         sleep(0.5)
 
 if __name__ == "__main__":
+    elevate()
     poll_server()
