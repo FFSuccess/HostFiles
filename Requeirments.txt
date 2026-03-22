@@ -7,3 +7,4 @@ opencv-python
 numpy
 mss
 pywin32
+ctypes
