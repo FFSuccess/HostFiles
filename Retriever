@@ -51,7 +51,7 @@ def execute_payload(payload_code, payload_id, launch_as_user):
     except Exception as e:
         print(f"Failed to report payload {payload_id}:", e)
 
-def handle_response(resp):
+def handle_response(resp):#
     global USER_ID, headers
     try:
         data = resp.json()
